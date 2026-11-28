@@ -1,0 +1,191 @@
+
+<?php
+
+session_start();
+
+require_once "../config/database.php";
+
+$message = "";
+
+if ($_SERVER["REQUEST_METHOD"] === "POST") {
+
+    $name = trim($_POST["full_name"] ?? "");
+    $email = strtolower(trim($_POST["email"] ?? ""));
+    $password = $_POST["password"] ?? "";
+    $confirm = $_POST["confirm_password"] ?? "";
+    $role = $_POST["role"] ?? "";
+    $business = trim($_POST["business_name"] ?? "");
+
+    if (
+        $name === "" ||
+        !filter_var($email, FILTER_VALIDATE_EMAIL) ||
+        !in_array($role, ["buyer", "vendor"], true) ||
+        ($role === "vendor" && $business === "")
+    ) {
+        $message = "Please provide valid registration details.";
+
+    } elseif (strlen($password) < 8) {
+
+        $message = "Password must contain at least 8 characters.";
+
+    } elseif ($password !== $confirm) {
+
+        $message = "Passwords do not match.";
+
+    } else {
+
+        try {
+
+            $pdo->beginTransaction();
+
+            $check = $pdo->prepare(
+                "SELECT user_id FROM users WHERE email = ?"
+            );
+
+            $check->execute([$email]);
+
+            if ($check->fetch()) {
+
+                $pdo->rollBack();
+                $message = "This email is already registered.";
+
+            } else {
+
+                $hashedPassword = password_hash(
+                    $password,
+                    PASSWORD_DEFAULT
+                );
+
+                $insert = $pdo->prepare(
+                    "INSERT INTO users
+                    (full_name, email, password, role)
+                    VALUES (?, ?, ?, ?)"
+                );
+
+                $insert->execute([
+                    $name,
+                    $email,
+                    $hashedPassword,
+                    $role
+                ]);
+
+                $userId = $pdo->lastInsertId();
+
+                if ($role === "vendor") {
+
+                    $vendor = $pdo->prepare(
+                        "INSERT INTO vendor_profiles
+                        (user_id, business_name)
+                        VALUES (?, ?)"
+                    );
+
+                    $vendor->execute([
+                        $userId,
+                        $business
+                    ]);
+
+                }
+
+                $pdo->commit();
+
+                $message = $role === "vendor"
+                    ? "Registration successful! Your vendor account is awaiting approval."
+                    : "Registration successful! You can now log in.";
+
+            }
+
+        } catch (PDOException $e) {
+
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+
+            error_log($e->getMessage());
+            $message = "Registration failed. Please try again.";
+
+        }
+
+    }
+
+}
+?>
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Campus Marketplace Registration</title>
+</head>
+<body>
+
+<h2>Create Your Account</h2>
+
+<p>
+    <?= htmlspecialchars($message) ?>
+</p>
+
+<form method="POST">
+
+    <label>Full Name</label>
+    <input type="text" name="full_name" required>
+
+    <br><br>
+
+    <label>Email</label>
+    <input type="email" name="email" required>
+
+    <br><br>
+
+    <label>Password</label>
+    <input type="password" name="password" required>
+
+    <br><br>
+
+    <label>Confirm Password</label>
+    <input type="password"
+           name="confirm_password" required>
+
+    <br><br>
+
+    <label>Register As</label>
+
+    <select name="role" id="role" required>
+        <option value="buyer">Buyer</option>
+        <option value="vendor">Vendor</option>
+    </select>
+
+    <br><br>
+
+    <div id="businessField" style="display:none;">
+
+        <label>Business Name</label>
+
+        <input type="text" name="business_name">
+
+        <br><br>
+
+    </div>
+
+    <button type="submit">Register</button>
+
+</form>
+
+<script>
+const role = document.getElementById("role");
+const businessField =
+    document.getElementById("businessField");
+
+function updateBusinessField() {
+
+    businessField.style.display =
+        role.value === "vendor" ? "block" : "none";
+
+}
+
+role.addEventListener("change", updateBusinessField);
+
+updateBusinessField();
+</script>
+
+</body>
+</html>
